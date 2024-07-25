@@ -16,7 +16,6 @@ const userSchema = mongoose.Schema({
             qty: Number
         }
     ],
-    orders: [],
     contact: String,
     address: {
         country: {

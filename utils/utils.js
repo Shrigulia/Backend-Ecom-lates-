@@ -1,7 +1,7 @@
 import { Vonage } from "@vonage/server-sdk";
 import nodemailer from 'nodemailer';
 import jwt from 'jsonwebtoken';
-
+import { io } from "../app.js";
 
 export const catchError = (res, status, success, message) => {
     res.status(status).json({
@@ -91,4 +91,12 @@ export const setCookie = async (res, user) => {
         return sendResponse(res, 500, false, 'Some error in setCookie');
 
     }
+}
+
+export const ioSocketFind = (req, sokcetName, data) => {
+    io.sockets.sockets.forEach((e) => {
+        if (e.userId === req.user._id.toString()) {
+            e.emit(sokcetName, { data })
+        }
+    })
 }

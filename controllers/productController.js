@@ -1,9 +1,10 @@
 import mongoose, { mongo } from "mongoose";
 import { getImageExtension } from "../config/multerConfig.js";
 import { productModel } from "../models/productModel.js";
-import { catchError, sendResponse } from "../utils/utils.js";
+import { catchError, ioSocketFind, sendResponse } from "../utils/utils.js";
 import multer from "multer";
-
+import { userModel } from "../models/userModel.js";
+import { io } from "../app.js";
 
 export const getAllProducts = async (req, res) => {
 
@@ -75,7 +76,9 @@ export const createProduct = async (req, res) => {
             price,
             category,
             images
-        })
+        });
+
+        io.emit('new-product-created', product)
 
         return sendResponse(res, 201, true, 'Product Created', product);
 
@@ -111,6 +114,8 @@ export const updateProduct = async (req, res) => {
         }
         );
 
+        io.emit('product-updated', product);
+
         return sendResponse(res, 200, true, 'Product Updated', product);
 
     } catch (error) {
@@ -140,6 +145,8 @@ export const deleteProductImage = async (req, res) => {
         product.images = product.images.filter(e => e._id.toString() !== imageId);
 
         await product.save();
+
+        io.emit('product-image-deleted', product)
 
         return sendResponse(res, 200, true, 'Image deleted', product);
 
@@ -191,6 +198,8 @@ export const addProductImage = async (req, res) => {
 
         await product.save();
 
+        io.emit('new-image-added', product);
+
         return sendResponse(res, 200, true, 'Img added');
 
 
@@ -232,6 +241,8 @@ export const deleteProduct = async (req, res) => {
         if (!product) return catchError(res, 404, false, 'Product not found');
 
         await product.deleteOne();
+
+        io.emit('product-deleted', productId);
 
         return sendResponse(res, 200, true, 'Product deleted');
 
@@ -287,6 +298,8 @@ export const createReview = async (req, res) => {
         product.rating = avg / product.review.length;
 
         await product.save();
+
+        io.emit('review-created', product);
 
         return sendResponse(res, 200, true, `${isReviewed ? 'Review Updated' : 'Review added'}`, product);
 
@@ -344,6 +357,8 @@ export const deleteReview = async (req, res) => {
 
         await product.save();
 
+        io.emit('review-deleted', product);
+
         return sendResponse(res, 200, true, 'Review deleted', product);
 
     } catch (error) {
@@ -358,12 +373,11 @@ export const addToCart = async (req, res) => {
 
         const { productId } = req.params;
 
-        const { qty, action } = req.body;
+        const { qty } = req.body;
 
         if (!mongoose.Types.ObjectId.isValid(productId)) return catchError(res, 400, false, 'Invalid productid');
 
         if (!qty || Number(qty) <= 0) return catchError(res, 400, false, 'qty required');
-
 
         const product = await productModel.findById(productId);
 
@@ -374,17 +388,145 @@ export const addToCart = async (req, res) => {
         if (isProductInCart === -1) {
             req.user.cart.push({ product: productId, qty: Number(qty) });
         } else {
-            action === 'increment' ? req.user.cart[isProductInCart].qty += Number(qty) : req.user.cart[isProductInCart].qty -= qty;
+            req.user.cart[isProductInCart].qty += Number(qty);
         }
 
         await req.user.save();
 
-        return sendResponse(res, 200, true, `${isProductInCart === -1 ? 'Product qty increased in' : 'Product added in cart'}`, req.user);
+        ioSocketFind(req, 'product-add-cart', req.user);
+
+        return sendResponse(res, 200, true, `${isProductInCart === -1 ? 'Product added in cart' : 'Product qty increased'}`, req.user);
 
 
     } catch (error) {
         console.log(res);
 
         return catchError(res, 500, false, 'error in addToCart');
+    }
+}
+
+export const removeFromCart = async (req, res) => {
+    try {
+
+        const { productId } = req.params;
+
+        let qty;
+
+        req.body.qty ? qty = req.body.qty : '';
+
+        if (!mongoose.Types.ObjectId.isValid(productId)) return catchError(res, 400, false, 'Invalid productid');
+
+        const product = await productModel.findById(productId);
+
+        if (!product) return catchError(res, 404, false, 'Product not found');
+
+        const productIndex = req.user.cart.findIndex(e => e.product.toString() === productId.toString());
+
+        if (productIndex === -1) {
+
+            return catchError(res, 404, false, 'Product not in cart');
+
+        } else {
+
+            if (req.body.qty) {
+
+                if (qty != undefined || '') {
+
+                    if (Number(qty) === 0) return catchError(res, 400, false, 'Quantity must be greater than 0');
+
+                    if (Number(qty) < 0) return catchError(res, 400, false, 'Quantity must be greater than 0');
+
+                    if (Number(qty) > req.user.cart[productIndex].qty) return catchError(res, 400, false, 'cannot remove qty more than added');
+
+                    if (req.user.cart[productIndex].qty <= 0) {
+                        req.user.cart.splice(productIndex, 1);
+                    }
+
+                    if (Number(qty) === req.user.cart[productIndex].qty) {
+                        req.user.cart.splice(productIndex, 1);
+                    } else {
+                        req.user.cart[productIndex].qty -= Number(qty);
+                    }
+                }
+
+            }
+            else {
+                req.user.cart.splice(productIndex, 1);
+            }
+        }
+
+        await req.user.save();
+
+        ioSocketFind(req, 'prooduct-removed-cart', req.user);
+
+        return sendResponse(res, 200, true, 'Product removed/updated in cart')
+
+    } catch (error) {
+        console.log(error);
+
+        return catchError(res, 500, false, 'error in removeFromCart');
+    }
+}
+
+export const addBulkToCart = async (req, res) => {
+    try {
+        const { productIds } = req.body;
+
+        console.log(productIds);
+
+        if (!Array.isArray(productIds) || productIds.length === 0) {
+            return catchError(res, 400, false, 'productIds array required');
+        }
+
+        for (const e of productIds) {
+            if (!mongoose.Types.ObjectId.isValid(e.productId)) return catchError(res, 400, false, 'Invalid productid');
+
+            if (!e.qty || Number(e.qty) <= 0) return catchError(res, 400, false, 'qty required');
+
+            const product = await productModel.findById(e.productId);
+
+            if (!product) {
+                return catchError(res, 404, false, `Product not found: ${e.productId}`);
+            }
+
+            const isProductInCart = req.user.cart.findIndex(item => item.product.toString() === e.productId.toString());
+
+            if (isProductInCart === -1) {
+                req.user.cart.push({ product: e.productId, qty: Number(e.qty) });
+            } else {
+                req.user.cart[isProductInCart].qty += Number(e.qty);
+            }
+        };
+
+        await req.user.save();
+
+        ioSocketFind(req, 'product-bulAdd-cart', req.user);
+
+        return sendResponse(res, 200, true, 'Product Added/updated in cart', req.user);
+
+    } catch (error) {
+        console.log(error);
+        return catchError(res, 500, false, 'error in addBulkCart')
+    }
+
+}
+
+export const mycart = async (req, res) => {
+    try {
+
+        const myCart = await userModel.findById(req.user._id).populate('cart.product');
+
+        if (!myCart) return catchError(res, 404, false, 'User not found');
+
+        const totalPrice = myCart.cart.reduce((acc, item) => {
+            return acc + (item.product.price * item.qty);
+        }, 0);
+
+        return sendResponse(res, 200, true, 'User cart retrieved', { cart: myCart.cart, totalPrice: totalPrice });
+
+    } catch (error) {
+        console.log(error);
+
+        return catchError(res, 500, false, 'error in mycart')
     }
 }

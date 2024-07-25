@@ -1,9 +1,10 @@
 import { userModel } from '../models/userModel.js';
-import { catchError, generateOTP, sendMail, sendResponse, sendSMS, setCookie } from '../utils/utils.js';
+import { catchError, generateOTP, ioSocketFind, sendMail, sendResponse, sendSMS, setCookie } from '../utils/utils.js';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import mongoose from 'mongoose';
+import { io } from '../app.js';
 
 export const signUp = async (req, res) => {
     try {
@@ -18,6 +19,8 @@ export const signUp = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, 10);
 
         const otp = generateOTP();
+
+        const users = await userModel.find();
 
         const userCreated = await userModel.create({
             fullName,
@@ -48,6 +51,12 @@ export const signUp = async (req, res) => {
         })
 
         await sendMail(res, email, 'OTP verification', "Ecom signup OTP", `Your otp for verification : - ${otp} \n will expire in ${process.env.OTP_EXPIRY} minute`);
+
+        io.sockets.sockets.forEach((e) => {
+            if (e.userId === '6694d1f00dd9433696b4a6a5') {
+                e.emit('new-user-created', users);
+            }
+        })
 
         sendResponse(res, 200, true, `otp sent to mail \n will expire in ${process.env.OTP_EXPIRY} minute`)
 
@@ -210,6 +219,12 @@ export const deleteAccount = async (req, res) => {
             expires: new Date(Date.now())
         });
 
+        io.sockets.sockets.forEach((e) => {
+            if (e.userId === '6694d1f00dd9433696b4a6a5') {
+                e.emit('user-deleted', user);
+            }
+        })
+
         return sendResponse(res, 200, true, 'Account deleted successfuly');
 
     } catch (error) {
@@ -301,6 +316,8 @@ export const updateProfile = async (req, res) => {
         }
 
         await user.save();
+
+        ioSocketFind(req, 'profile-upadted', user);
 
         return sendResponse(res, 200, true, 'Profile updated successfully');
 
@@ -570,6 +587,8 @@ export const deleteSingleUser = async (req, res) => {
 
         await user.deleteOne();
 
+        ioSocketFind(req, 'user-deleted-admin', user);
+
         return sendResponse(res, 200, true, 'User deleted')
 
     } catch (error) {
@@ -593,6 +612,8 @@ export const makeAdmin = async (req, res) => {
         user.isAdmin = !user.isAdmin;
 
         await user.save();
+
+        ioSocketFind(req, 'role-update-admin', user);
 
         return sendResponse(res, 200, true, 'role updated', user);
 

@@ -1,7 +1,7 @@
 import express from 'express';
 import { adminRole, isLoggedIn } from '../middlewares/authentication.js';
 import { productUpload } from '../config/multerConfig.js';
-import { addProductImage, addToCart, allReviewOfProduct, createProduct, createReview, deleteProduct, deleteProductImage, deleteReview, getAllProducts, getProductDetail, updateProduct } from '../controllers/productController.js';
+import { addBulkToCart, addProductImage, addToCart, allReviewOfProduct, createProduct, createReview, deleteProduct, deleteProductImage, deleteReview, getAllProducts, getProductDetail, mycart, removeFromCart, updateProduct } from '../controllers/productController.js';
 
 const router = express.Router();
 
@@ -36,6 +36,17 @@ router.get('/review/:productId', allReviewOfProduct);
 router.delete('/delete/:productId/review/:reviewId', isLoggedIn, adminRole, deleteReview);
 
 // add to cart single product
-router.post('/cart/:productId', isLoggedIn,addToCart)
+router.post('/cart/add/:productId', isLoggedIn, addToCart);
+
+// remove from cart single product
+router.delete('/cart/remove/:productId', isLoggedIn, removeFromCart);
+
+// add bulk to cart
+router.post('/cart/bulk/add', isLoggedIn, addBulkToCart);
+
+// my cart
+router.get('/cart/my', isLoggedIn, mycart);
+
+
 
 export default router;
